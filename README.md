@@ -222,8 +222,8 @@ cp .env.example .env
 ### Environment Variables
 
 ```env
-OPENAI_API_KEY=sk-...
-FIRECRAWL_API_KEY=fc-...
+OPENAI_API_KEY=our-openai-key
+FIRECRAWL_API_KEY=our-firecrawl-key
 QDRANT_URL=https://your-cluster.qdrant.io
 QDRANT_API_KEY=your-qdrant-key
 ```
