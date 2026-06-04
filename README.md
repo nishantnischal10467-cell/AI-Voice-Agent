@@ -282,30 +282,5 @@ Act as a first-line voice triage agent that resolves common queries instantly an
 ### 🏗️ Enterprise Internal Tools
 Build internal knowledge bots for HR policies, IT helpdesks, onboarding documentation, and compliance guidelines — accessible by voice.
 
----
-
-## 🤝 Contributing
-
-Contributions are welcome! If you'd like to improve this project:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes (`git commit -m 'Add your feature'`)
-4. Push to the branch (`git push origin feature/your-feature`)
-5. Open a Pull Request
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-
-Built with ❤️ using OpenAI · Qdrant · Firecrawl · Streamlit
-
-⭐ **If you found this useful, please give it a star!** ⭐
 
 </div>
