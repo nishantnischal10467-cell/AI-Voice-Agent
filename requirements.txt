@@ -10,7 +10,6 @@ langchain-openai==1.0.2
 langchain-text-splitters==1.0.0
 
 qdrant-client==1.15.1
-fastembed==0.7.3
 pypdf==5.9.0
 python-dotenv==1.1.1
 

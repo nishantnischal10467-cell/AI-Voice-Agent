@@ -16,8 +16,7 @@ from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from fastembed import TextEmbedding
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 from agents import Agent, Runner
 
 
@@ -47,7 +46,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 QDRANT_URL = os.getenv("QDRANT_URL", "").strip()
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
 QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", str(BASE_DIR / ".qdrant")).strip()
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5").strip()
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small").strip()
+EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
 # ─────────────────────────────────────────────────────────────────────────────
 
 if OPENAI_API_KEY:
@@ -64,7 +65,7 @@ app.config["MAX_CONTENT_LENGTH"]   = 50 * 1024 * 1024  # 50 MB
 # ── Shared state (single-user local app) ─────────────────────────────────────
 state: Dict = {
     "client":              None,
-    "embedding_model":     None,
+    "embedding_client":    None,
     "processor_agent":     None,
     "tts_agent":           None,
     "selected_voice":      "coral",
@@ -79,7 +80,7 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
 
 
-def setup_qdrant() -> Tuple[QdrantClient, TextEmbedding]:
+def setup_qdrant() -> Tuple[QdrantClient, OpenAI]:
     use_remote_qdrant = bool(QDRANT_URL)
     if use_remote_qdrant:
         client = QdrantClient(
@@ -91,25 +92,31 @@ def setup_qdrant() -> Tuple[QdrantClient, TextEmbedding]:
         os.makedirs(QDRANT_LOCAL_PATH, exist_ok=True)
         client = QdrantClient(path=QDRANT_LOCAL_PATH)
 
-    try:
-        embedding_model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
-    except Exception as e:
-        raise RuntimeError(
-            "Embedding model initialization failed. FastEmbed may need internet on first run "
-            f"to download '{EMBEDDING_MODEL_NAME}'. Original error: {e}"
-        ) from e
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required for OpenAI embeddings.")
 
-    test_emb = list(embedding_model.embed(["test"]))[0]
-    dim = len(test_emb)
+    embedding_client = OpenAI(api_key=OPENAI_API_KEY)
     try:
         client.create_collection(
             collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=EMBEDDING_DIMENSIONS, distance=Distance.COSINE),
         )
     except Exception as e:
         if "already exists" not in str(e):
             raise
-    return client, embedding_model
+    return client, embedding_client
+
+
+def embed_texts(texts: List[str]) -> List[List[float]]:
+    embedding_client = state["embedding_client"]
+    if not embedding_client:
+        raise RuntimeError("Embedding client is not initialized.")
+
+    response = embedding_client.embeddings.create(
+        model=EMBEDDING_MODEL_NAME,
+        input=texts,
+    )
+    return [item.embedding for item in response.data]
 
 
 def process_pdf(filepath: str, filename: str) -> List:
@@ -127,16 +134,19 @@ def process_pdf(filepath: str, filename: str) -> List:
 
 def store_embeddings(documents: List) -> None:
     client    = state["client"]
-    emb_model = state["embedding_model"]
-    for doc in documents:
-        emb = list(emb_model.embed([doc.page_content]))[0]
+    for start in range(0, len(documents), EMBEDDING_BATCH_SIZE):
+        batch = documents[start:start + EMBEDDING_BATCH_SIZE]
+        embeddings = embed_texts([doc.page_content for doc in batch])
+        points = []
+        for doc, emb in zip(batch, embeddings):
+            points.append(models.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=emb,
+                payload={"content": doc.page_content, **doc.metadata},
+            ))
         client.upsert(
             collection_name=COLLECTION_NAME,
-            points=[models.PointStruct(
-                id=str(uuid.uuid4()),
-                vector=emb.tolist(),
-                payload={"content": doc.page_content, **doc.metadata},
-            )],
+            points=points,
         )
 
 
@@ -192,13 +202,12 @@ def build_local_response(query: str, results: List) -> str:
 
 async def run_query(query: str, voice: str) -> Dict:
     client    = state["client"]
-    emb_model = state["embedding_model"]
 
     # Embed query & search
-    q_emb = list(emb_model.embed([query]))[0]
+    q_emb = embed_texts([query])[0]
     search_resp = client.query_points(
         collection_name=COLLECTION_NAME,
-        query=q_emb.tolist(),
+        query=q_emb,
         limit=3,
         with_payload=True,
     )
@@ -275,6 +284,9 @@ def set_voice():
 
 @app.route("/api/upload", methods=["POST"])
 def upload_pdf():
+    if not OPENAI_API_KEY:
+        return jsonify({"error": "OPENAI_API_KEY is required to index PDFs with OpenAI embeddings."}), 500
+
     if "file" not in request.files:
         return jsonify({"error": "No file part"}), 400
     f = request.files["file"]
@@ -290,7 +302,7 @@ def upload_pdf():
 
     try:
         if not state["client"]:
-            state["client"], state["embedding_model"] = setup_qdrant()
+            state["client"], state["embedding_client"] = setup_qdrant()
 
         docs = process_pdf(filepath, filename)
         if not docs:
