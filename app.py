@@ -4,7 +4,7 @@ Run:  python run.py   or   python app.py
 """
 
 from typing import List, Dict, Tuple
-import os, tempfile, uuid, asyncio, logging
+import os, tempfile, uuid, asyncio, logging, traceback, hashlib, time
 from pathlib import Path
 from datetime import datetime
 
@@ -48,7 +48,11 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", "").strip()
 QDRANT_LOCAL_PATH = os.getenv("QDRANT_LOCAL_PATH", str(BASE_DIR / ".qdrant")).strip()
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-3-small").strip()
 EMBEDDING_DIMENSIONS = int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
-EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "16"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "8"))
+SEARCH_LIMIT = int(os.getenv("SEARCH_LIMIT", "3"))
+TTS_MODEL_NAME = os.getenv("TTS_MODEL_NAME", "tts-1").strip()
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
+AUDIO_TTL_SECONDS = int(os.getenv("AUDIO_TTL_SECONDS", "3600"))
 # ─────────────────────────────────────────────────────────────────────────────
 
 if OPENAI_API_KEY:
@@ -70,6 +74,7 @@ state: Dict = {
     "tts_agent":           None,
     "selected_voice":      "coral",
     "processed_documents": [],
+    "processed_hashes":    set(),
     "setup_complete":      False,
 }
 
@@ -78,6 +83,47 @@ state: Dict = {
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXT
+
+
+def cleanup_old_audio_files() -> None:
+    cutoff = time.time() - AUDIO_TTL_SECONDS
+    temp_dir = tempfile.gettempdir()
+    for name in os.listdir(temp_dir):
+        if not name.startswith("response_") or not name.endswith(".mp3"):
+            continue
+        path = os.path.join(temp_dir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            app.logger.warning("Could not remove old audio file: %s", path)
+
+
+def file_sha256(filepath: str) -> str:
+    digest = hashlib.sha256()
+    with open(filepath, "rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_pdf_file(filepath: str) -> bool:
+    with open(filepath, "rb") as file:
+        return file.read(4) == b"%PDF"
+
+
+def get_collection_vector_size(client: QdrantClient) -> int | None:
+    try:
+        collection = client.get_collection(COLLECTION_NAME)
+        vectors = collection.config.params.vectors
+        if hasattr(vectors, "size"):
+            return vectors.size
+        if isinstance(vectors, dict):
+            first_vector = next(iter(vectors.values()), None)
+            return getattr(first_vector, "size", None)
+    except Exception:
+        app.logger.exception("Could not inspect Qdrant collection")
+    return None
 
 
 def setup_qdrant() -> Tuple[QdrantClient, OpenAI]:
@@ -95,8 +141,20 @@ def setup_qdrant() -> Tuple[QdrantClient, OpenAI]:
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY is required for OpenAI embeddings.")
 
-    embedding_client = OpenAI(api_key=OPENAI_API_KEY)
+    embedding_client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT_SECONDS)
     try:
+        if client.collection_exists(COLLECTION_NAME):
+            current_size = get_collection_vector_size(client)
+            if current_size == EMBEDDING_DIMENSIONS:
+                return client, embedding_client
+            app.logger.warning(
+                "Recreating Qdrant collection %s because vector size %s != %s",
+                COLLECTION_NAME,
+                current_size,
+                EMBEDDING_DIMENSIONS,
+            )
+            client.delete_collection(COLLECTION_NAME)
+
         client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=VectorParams(size=EMBEDDING_DIMENSIONS, distance=Distance.COSINE),
@@ -208,7 +266,7 @@ async def run_query(query: str, voice: str) -> Dict:
     search_resp = client.query_points(
         collection_name=COLLECTION_NAME,
         query=q_emb,
-        limit=3,
+        limit=SEARCH_LIMIT,
         with_payload=True,
     )
     results = search_resp.points if hasattr(search_resp, "points") else []
@@ -239,14 +297,18 @@ async def run_query(query: str, voice: str) -> Dict:
 
     # Generate audio — stream to speaker first, then save MP3
     # Generate an MP3 file for the browser player.
-    aclient = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    mp3_resp = await aclient.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice=voice,
-        input=text_response,
-        instructions=voice_instructions,
-        response_format="mp3",
-    )
+    aclient = AsyncOpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT_SECONDS)
+    speech_kwargs = {
+        "model": TTS_MODEL_NAME,
+        "voice": voice,
+        "input": text_response,
+        "response_format": "mp3",
+    }
+    if TTS_MODEL_NAME.startswith("gpt-4o"):
+        speech_kwargs["instructions"] = voice_instructions
+
+    mp3_resp = await aclient.audio.speech.create(**speech_kwargs)
+    cleanup_old_audio_files()
     audio_path = os.path.join(tempfile.gettempdir(), f"response_{uuid.uuid4()}.mp3")
     with open(audio_path, "wb") as f:
         f.write(mp3_resp.content)
@@ -290,6 +352,8 @@ def upload_pdf():
     if "file" not in request.files:
         return jsonify({"error": "No file part"}), 400
     f = request.files["file"]
+    if f.mimetype and f.mimetype not in {"application/pdf", "application/octet-stream"}:
+        return jsonify({"error": "Invalid file type - PDF only"}), 400
     if f.filename == "" or not allowed_file(f.filename):
         return jsonify({"error": "Invalid file — PDF only"}), 400
 
@@ -301,6 +365,13 @@ def upload_pdf():
     f.save(filepath)
 
     try:
+        if not is_pdf_file(filepath):
+            return jsonify({"error": "Invalid file content - PDF only"}), 400
+
+        file_hash = file_sha256(filepath)
+        if file_hash in state["processed_hashes"]:
+            return jsonify({"message": "This PDF was already processed.", "already": True})
+
         if not state["client"]:
             state["client"], state["embedding_client"] = setup_qdrant()
 
@@ -310,10 +381,19 @@ def upload_pdf():
 
         store_embeddings(docs)
         state["processed_documents"].append(filename)
+        state["processed_hashes"].add(file_hash)
         state["setup_complete"] = True
         return jsonify({"ok": True, "filename": filename, "chunks": len(docs)})
     except Exception as e:
+        traceback.print_exc()
+        app.logger.exception(e)
         return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except OSError:
+            app.logger.warning("Could not remove uploaded PDF: %s", filepath)
 
 
 @app.route("/api/query", methods=["POST"])
@@ -338,11 +418,14 @@ def query():
             response["audio_id"] = os.path.basename(result["audio_path"])
         return jsonify(response)
     except Exception as e:
+        traceback.print_exc()
+        app.logger.exception(e)
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/audio/<filename>")
 def serve_audio(filename):
+    cleanup_old_audio_files()
     path = os.path.join(tempfile.gettempdir(), secure_filename(filename))
     if not os.path.exists(path):
         return jsonify({"error": "Audio not found"}), 404
