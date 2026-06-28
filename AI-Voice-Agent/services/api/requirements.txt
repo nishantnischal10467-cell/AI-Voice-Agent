@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+openai-agents==0.4.2
+qdrant-client==1.15.1
+fastembed==0.7.3
+langchain-community==0.4.1
+langchain-text-splitters==1.0.0
+openai==2.7.1
+pypdf==5.1.0
