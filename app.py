@@ -221,7 +221,7 @@ def get_agents() -> Tuple[Agent, Agent]:
         4. Cite the source files when referencing specific content
         5. Keep responses natural and conversational
         6. Format your response in a way that's easy to speak out loud""",
-        model="gpt-4o",
+        model="gpt-4.1",
     )
     tts = Agent(
         name="Text-to-Speech Agent",
@@ -232,7 +232,7 @@ def get_agents() -> Tuple[Agent, Agent]:
         4. Keep the tone professional but friendly
         5. Use appropriate pauses for better comprehension
         6. Ensure the speech is clear and well-articulated""",
-        model="gpt-4o",
+        model="gpt-4.1",
     )
     state["processor_agent"] = processor
     state["tts_agent"]       = tts
