@@ -1,0 +1,12 @@
+{
+  "name": "ai-voice-agent-render-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix AI-Voice-Agent ci && npm --prefix AI-Voice-Agent run build",
+    "start": "cd AI-Voice-Agent && npm run start -- -p ${PORT:-3000}"
+  },
+  "engines": {
+    "node": "20.x"
+  }
+}
