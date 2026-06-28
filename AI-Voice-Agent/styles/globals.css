@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 45 38% 96%;
+  --foreground: 220 17% 14%;
+  --card: 48 38% 98%;
+  --card-foreground: 220 17% 14%;
+  --primary: 183 72% 28%;
+  --primary-foreground: 48 38% 98%;
+  --secondary: 19 58% 88%;
+  --secondary-foreground: 220 17% 14%;
+  --muted: 42 26% 88%;
+  --muted-foreground: 220 10% 42%;
+  --accent: 345 56% 53%;
+  --accent-foreground: 48 38% 98%;
+  --destructive: 0 73% 45%;
+  --destructive-foreground: 48 38% 98%;
+  --border: 220 13% 82%;
+  --input: 220 13% 82%;
+  --ring: 183 72% 28%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 222 23% 10%;
+  --foreground: 47 28% 93%;
+  --card: 222 21% 13%;
+  --card-foreground: 47 28% 93%;
+  --primary: 181 59% 48%;
+  --primary-foreground: 222 23% 10%;
+  --secondary: 230 16% 22%;
+  --secondary-foreground: 47 28% 93%;
+  --muted: 225 17% 20%;
+  --muted-foreground: 47 14% 70%;
+  --accent: 351 68% 63%;
+  --accent-foreground: 222 23% 10%;
+  --destructive: 0 70% 60%;
+  --destructive-foreground: 222 23% 10%;
+  --border: 226 15% 25%;
+  --input: 226 15% 25%;
+  --ring: 181 59% 48%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    linear-gradient(135deg, hsl(var(--background)) 0%, hsl(var(--muted)) 100%),
+    hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.surface-grid {
+  background-image:
+    linear-gradient(to right, hsl(var(--border) / 0.38) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--border) / 0.38) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
