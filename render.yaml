@@ -1,24 +1,22 @@
 services:
   - type: web
     name: ai-voice-agent-web
-    runtime: node
+    runtime: python
     plan: free
     rootDir: .
-    buildCommand: npm run build
-    startCommand: npm run start
+    buildCommand: python -m pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+    startCommand: gunicorn app:app
     autoDeploy: true
     envVars:
-      - key: NODE_VERSION
-        value: 20.19.0
-      - key: NEXT_PUBLIC_APP_URL
+      - key: PYTHON_VERSION
+        value: 3.11.10
+      - key: OPENAI_API_KEY
         sync: false
-      - key: AI_SERVICE_URL
+      - key: QDRANT_URL
         sync: false
-      - key: AI_SERVICE_API_KEY
+      - key: QDRANT_API_KEY
         sync: false
-      - key: NEXTAUTH_URL
-        sync: false
-      - key: NEXTAUTH_SECRET
-        sync: false
-      - key: AUTH_TRUST_HOST
-        value: "true"
+      - key: QDRANT_LOCAL_PATH
+        value: .qdrant
+      - key: EMBEDDING_MODEL_NAME
+        value: BAAI/bge-small-en-v1.5
