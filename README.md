@@ -32,5 +32,3 @@ The original Flask app files are retained at the repository root for audit/histo
 - `run.py`
 - `requirements.txt`
 - `static/index.html`
-
-Do not commit `.env`, `.qdrant`, caches, generated audio, or dependency folders.
